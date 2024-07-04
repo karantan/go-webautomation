@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/url"
 	"os"
-	"regexp"
 	"strings"
 	"webautomation/browser"
 
@@ -55,33 +54,6 @@ type Prospect struct {
 	Members string
 }
 
-func extractNameAndTitle(input string) (string, string) {
-	// Regular expression to match the name (assuming it is the first line)
-	namePattern := regexp.MustCompile(`^[^\n]+`)
-	// Regular expression to match and remove unwanted parts
-	unwantedPattern := regexp.MustCompile(`(?m)\s*·\s*3rd\s*|\s*3rd\+ degree connection\s*|\d+\s*followers\s*$`)
-
-	// Extracting name using the regular expression
-	nameMatch := namePattern.FindString(input)
-	name := strings.TrimSpace(nameMatch)
-
-	// Removing unwanted parts
-	cleanedInput := unwantedPattern.ReplaceAllString(input, "")
-
-	// Finding the title (assuming it's the last significant line)
-	lines := strings.Split(cleanedInput, "\n")
-	var title string
-	for i := len(lines) - 1; i >= 0; i-- {
-		line := strings.TrimSpace(lines[i])
-		if line != "" && line != name {
-			title = line
-			break
-		}
-	}
-
-	return name, title
-}
-
 func getProspectName(page playwright.Page, linkedinURL string) (Prospect, error) {
 	// Make sure to remove trailing /
 	linkedinURL, _ = strings.CutSuffix(linkedinURL, "/")
@@ -99,18 +71,25 @@ func getProspectName(page playwright.Page, linkedinURL string) (Prospect, error)
 		return Prospect{}, nil
 	}
 
+	page.Locator(".org-top-card-summary__title").WaitFor(playwright.LocatorWaitForOptions{Timeout: playwright.Float(2000)})
+	companyName, err := page.Locator(".org-top-card-summary__title").First().TextContent()
+	if err != nil {
+		fmt.Printf("Error getting company name: %v\n", err)
+		return Prospect{}, err
+	}
+
 	for _, role := range businessRoles {
 		page.GetByPlaceholder("Search employees by title,").Click()
-		page.GetByPlaceholder("Search employees by title,").Fill(role)
+		page.GetByPlaceholder("Search employees by title,").Fill(fmt.Sprintf("%s %s", role, companyName))
 		err := page.GetByPlaceholder("Search employees by title,").Press("Enter")
 		if err != nil {
 			return Prospect{}, err
 		}
 
 		// Wait 2 seconds for JS filter finishes
-		page.Locator(".org-people-profile-card__profile-info").WaitFor(playwright.LocatorWaitForOptions{Timeout: playwright.Float(2000)})
-		elementCards := page.Locator(".org-people-profile-card__profile-info")
-		elCount, err := elementCards.Count()
+		page.Locator("main .artdeco-entity-lockup__title").WaitFor(playwright.LocatorWaitForOptions{Timeout: playwright.Float(2000)})
+		elementNames := page.Locator("main .artdeco-entity-lockup__title")
+		elCount, err := elementNames.Count()
 		if err != nil {
 			return Prospect{}, err
 		}
@@ -119,11 +98,36 @@ func getProspectName(page playwright.Page, linkedinURL string) (Prospect, error)
 			continue
 		}
 
-		card, err := elementCards.First().TextContent()
+		elementTitles := page.Locator("main .artdeco-entity-lockup__subtitle")
+
+		// Check all results and filter out e.g. "LinkedIn Member"
+		allNames, err := elementNames.All()
 		if err != nil {
 			return Prospect{}, err
 		}
-		name, title := extractNameAndTitle(strings.TrimSpace(card))
+		desiredProspect := 0
+		for i, n := range allNames {
+			name, err := n.TextContent()
+			if err != nil {
+				fmt.Printf("Error parsing title: %v\n", err)
+				continue
+			}
+			if strings.Contains(name, "LinkedIn Member") {
+				desiredProspect = i
+				continue
+			}
+			desiredProspect = i
+			break
+		}
+
+		name, err := elementNames.Nth(desiredProspect).TextContent()
+		if err != nil {
+			return Prospect{}, err
+		}
+		title, err := elementTitles.Nth(desiredProspect).TextContent()
+		if err != nil {
+			return Prospect{}, err
+		}
 
 		return Prospect{Name: strings.TrimSpace(name), Title: strings.TrimSpace(title), Members: numberOfMembers}, nil
 	}
