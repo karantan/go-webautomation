@@ -164,7 +164,7 @@ func main() {
 	}
 	// set default timeout to 5sec so that we don't waste time when we cannot finde
 	// some elements
-	page.SetDefaultTimeout(5000)
+	page.SetDefaultTimeout(7000)
 
 	// Start scraping
 	linkedinLogin(page)
